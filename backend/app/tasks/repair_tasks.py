@@ -5,11 +5,12 @@ from datetime import datetime
 from celery import shared_task, group
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import torch
 
 from app.config import settings
 from app.models import RepairTask, DamageRegion, BatchTask, BatchItem
 from app.utils.image_utils import load_image, save_repair_image, save_full_repair_image
-from app.gan_model.inference import repair_region, detect_damage_regions
+from app.gan_model.inference import repair_region, detect_damage_regions, get_device
 
 
 def _get_sync_session():
@@ -48,6 +49,11 @@ def repair_single_task(self, task_id: str, regions: list[dict]):
         task.status = "completed"
         task.completed_at = datetime.utcnow()
         session.commit()
+
+        del image, current_image
+        device = get_device()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return {"status": "completed", "task_id": task_id, "repaired_path": full_repair_path}
 
@@ -102,6 +108,11 @@ def repair_batch_task(self, batch_id: str):
 
                         item.status = "completed"
                         batch.completed_count += 1
+
+                        del image, current_image, detected_regions
+                        device = get_device()
+                        if device.type == "cuda":
+                            torch.cuda.empty_cache()
                 else:
                     item.status = "skipped"
 

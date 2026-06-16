@@ -43,6 +43,8 @@ def load_autoencoder() -> Autoencoder:
 
     _autoencoder = _autoencoder.to(device)
     _autoencoder.eval()
+    for param in _autoencoder.parameters():
+        param.requires_grad = False
     return _autoencoder
 
 
@@ -63,6 +65,8 @@ def load_detector() -> DamageDetector:
 
     _detector = _detector.to(device)
     _detector.eval()
+    for param in _detector.parameters():
+        param.requires_grad = False
     return _detector
 
 
@@ -84,6 +88,7 @@ _transform = transforms.Compose([
 ])
 
 
+@torch.no_grad()
 def repair_region(image: Image.Image, x: int, y: int, w: int, h: int) -> Image.Image:
     device = get_device()
     model = load_autoencoder()
@@ -91,43 +96,52 @@ def repair_region(image: Image.Image, x: int, y: int, w: int, h: int) -> Image.I
     img_w, img_h = image.size
     region = image.crop((x, y, x + w, y + h))
 
-    region_tensor = _transform(region).unsqueeze(0).to(device)
+    region_tensor = _transform(region).unsqueeze(0).to(device, non_blocking=True)
 
-    mask = torch.ones(1, 1, region_tensor.shape[2], region_tensor.shape[3], device=device)
+    mask = torch.ones(1, 1, region_tensor.shape[2], region_tensor.shape[3], device=device, dtype=torch.float32)
     input_tensor = torch.cat([region_tensor, mask], dim=1)
 
-    with torch.no_grad():
-        output = model(input_tensor)
+    output = model(input_tensor)
 
-    output = output.squeeze(0).cpu()
-    output = output * 0.5 + 0.5
-    output = torch.clamp(output, 0, 1)
+    output_np = output.squeeze(0).cpu().detach()
+    output_np = output_np * 0.5 + 0.5
+    output_np = torch.clamp(output_np, 0, 1)
 
-    repaired = transforms.ToPILImage()(output)
+    repaired = transforms.ToPILImage()(output_np)
     repaired = repaired.resize((w, h), Image.LANCZOS)
 
     result = image.copy()
     result.paste(repaired, (x, y))
+
+    del region_tensor, mask, input_tensor, output, output_np
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     return result
 
 
+@torch.no_grad()
 def detect_damage_regions(image: Image.Image, threshold: float = 0.5) -> list[dict]:
     device = get_device()
     model = load_detector()
 
     orig_w, orig_h = image.size
-    input_tensor = _transform(image).unsqueeze(0).to(device)
+    input_tensor = _transform(image).unsqueeze(0).to(device, non_blocking=True)
 
-    with torch.no_grad():
-        mask = model(input_tensor)
+    mask_output = model(input_tensor)
 
-    mask = mask.squeeze(0).squeeze(0).cpu().numpy()
-    mask = (mask > threshold).astype(np.uint8)
+    mask_np = mask_output.squeeze(0).squeeze(0).cpu().detach().numpy()
+    mask_np = (mask_np > threshold).astype(np.uint8)
 
-    mask_pil = Image.fromarray(mask * 255).resize((orig_w, orig_h), Image.NEAREST)
+    mask_pil = Image.fromarray(mask_np * 255).resize((orig_w, orig_h), Image.NEAREST)
     mask_arr = np.array(mask_pil)
 
     regions = _find_connected_regions(mask_arr)
+
+    del input_tensor, mask_output, mask_np
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     return regions
 
 
