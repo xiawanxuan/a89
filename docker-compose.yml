@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: yiman
+      POSTGRES_PASSWORD: yiman123
+      POSTGRES_DB: yiman_repair
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: yiman
+      RABBITMQ_DEFAULT_PASS: yiman123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://yiman:yiman123@postgres:5432/yiman_repair
+      DATABASE_URL_SYNC: postgresql+psycopg2://yiman:yiman123@postgres:5432/yiman_repair
+      CELERY_BROKER_URL: amqp://yiman:yiman123@rabbitmq:5672//
+    volumes:
+      - ./backend:/app
+      - upload_data:/app/uploads
+      - repair_data:/app/repairs
+      - model_data:/app/models
+    depends_on:
+      - postgres
+      - rabbitmq
+
+  celery_worker:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://yiman:yiman123@postgres:5432/yiman_repair
+      CELERY_BROKER_URL: amqp://yiman:yiman123@rabbitmq:5672//
+    volumes:
+      - ./backend:/app
+      - upload_data:/app/uploads
+      - repair_data:/app/repairs
+      - model_data:/app/models
+    depends_on:
+      - postgres
+      - rabbitmq
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  rabbitmqdata:
+  upload_data:
+  repair_data:
+  model_data:

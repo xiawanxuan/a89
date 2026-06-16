@@ -1,34 +1,19 @@
-﻿# System
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Logs
-*.log
-logs/
-
-# Temp
-*.tmp
-*.bak
-*.swp
-
-# Build / Dependencies
-node_modules/
+﻿__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
 dist/
 build/
-out/
+.env
 venv/
-env/
-__pycache__/
-*.pyc
-
-# IDE
+.venv/
+node_modules/
+uploads/
+repairs/
+models/*.pth
+*.log
+.DS_Store
+Thumbs.db
+pgdata/
 .idea/
 .vscode/
-*.suo
-*.user
-*.sln.cache
-
-# Env
-.env
-.env.local

@@ -1,0 +1,17 @@
+# Backend
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+pydantic==2.5.2
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+celery==5.3.6
+Pillow==10.1.0
+torch==2.1.0
+torchvision==0.16.0
+numpy==1.26.2
+python-jose==3.3.0
+aiofiles==23.2.1
+zipfile36==0.1.3
