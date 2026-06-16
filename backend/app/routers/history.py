@@ -20,7 +20,10 @@ async def list_history(
     from sqlalchemy.orm import selectinload
 
     async with async_session() as session:
-        stmt = select(RepairTask).options(selectinload(RepairTask.regions)).order_by(RepairTask.created_at.desc())
+        stmt = select(RepairTask).options(
+            selectinload(RepairTask.regions),
+            selectinload(RepairTask.versions),
+        ).order_by(RepairTask.created_at.desc())
 
         if status:
             stmt = stmt.where(RepairTask.status == status)
@@ -37,11 +40,16 @@ async def get_history_detail(task_id: uuid.UUID):
     from sqlalchemy.orm import selectinload
 
     async with async_session() as session:
-        stmt = select(RepairTask).where(RepairTask.id == task_id).options(selectinload(RepairTask.regions))
+        stmt = select(RepairTask).where(RepairTask.id == task_id).options(
+            selectinload(RepairTask.regions),
+            selectinload(RepairTask.versions),
+        )
         task = (await session.execute(stmt)).scalar_one_or_none()
         if not task:
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="记录不存在")
+        if task.versions:
+            task.versions.sort(key=lambda v: v.version_number, reverse=True)
         return RepairTaskOut.model_validate(task)
 
 

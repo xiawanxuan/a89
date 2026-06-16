@@ -32,13 +32,37 @@ class RepairTaskOut(BaseModel):
     filename: str
     original_path: str
     repaired_path: str | None = None
+    quality_score: float | None = None
+    selected_version_id: uuid.UUID | None = None
     status: str
     created_at: datetime
     completed_at: datetime | None = None
     regions: list[DamageRegionOut] = []
+    versions: list["RepairVersionOut"] = []
 
     class Config:
         from_attributes = True
+
+
+class RepairVersionOut(BaseModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    version_number: int
+    repaired_path: str
+    quality_score: float
+    created_at: datetime
+    is_selected: int
+
+    class Config:
+        from_attributes = True
+
+
+class SelectVersionRequest(BaseModel):
+    task_id: uuid.UUID
+    version_id: uuid.UUID
+
+
+RepairTaskOut.model_rebuild()
 
 
 class BatchTaskOut(BaseModel):

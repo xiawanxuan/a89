@@ -15,11 +15,14 @@ class RepairTask(Base):
     filename: Mapped[str] = mapped_column(String(256), nullable=False)
     original_path: Mapped[str] = mapped_column(Text, nullable=False)
     repaired_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selected_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     regions: Mapped[list["DamageRegion"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    versions: Mapped[list["RepairVersion"]] = relationship(back_populates="task", cascade="all, delete-orphan")
 
 
 class DamageRegion(Base):
@@ -60,3 +63,17 @@ class BatchItem(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending")
 
     batch_task: Mapped["BatchTask"] = mapped_column(back_populates="items")
+
+
+class RepairVersion(Base):
+    __tablename__ = "repair_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("repair_tasks.id"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    repaired_path: Mapped[str] = mapped_column(Text, nullable=False)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_selected: Mapped[int] = mapped_column(Integer, default=0)
+
+    task: Mapped["RepairTask"] = mapped_column(back_populates="versions")

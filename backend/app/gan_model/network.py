@@ -93,3 +93,36 @@ class DamageDetector(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decoder(self.encoder(x))
+
+
+class QualityScorer(nn.Module):
+    def __init__(self, in_channels: int = 3, base_filters: int = 32):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, base_filters, 4, stride=2, padding=1),
+            nn.InstanceNorm2d(base_filters),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_filters, base_filters * 2, 4, stride=2, padding=1),
+            nn.InstanceNorm2d(base_filters * 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_filters * 2, base_filters * 4, 4, stride=2, padding=1),
+            nn.InstanceNorm2d(base_filters * 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_filters * 4, base_filters * 8, 4, stride=2, padding=1),
+            nn.InstanceNorm2d(base_filters * 8),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(base_filters * 8, base_filters * 4),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(base_filters * 4, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.features(x)
+        score = self.classifier(feat)
+        return score * 100

@@ -6,15 +6,32 @@
     </div>
     <div class="preview-content" v-if="store.currentTask">
       <template v-if="store.isTaskCompleted">
-        <CompareSlider
-          :original-src="store.currentTask.original_path"
-          :repaired-src="store.currentTask.repaired_path!"
-        />
+        <div class="completed-view">
+          <CompareSlider
+            :original-src="store.currentTask.original_path"
+            :repaired-src="previewRepairedPath"
+          />
+          <div v-if="displayScore !== null" class="score-section">
+            <QualityScore :score="displayScore" />
+          </div>
+          <div v-if="hasVersions" class="version-section">
+            <VersionPanel
+              :versions="store.versions"
+              :is-processing="isRepairProcessing"
+              @select="handleSelectVersion"
+              @preview="handlePreviewVersion"
+              @retry="handleRetry"
+            />
+          </div>
+        </div>
       </template>
       <template v-else-if="store.currentTask.status === 'processing' || store.currentTask.status === 'queued'">
         <div class="loading-state">
           <div class="spinner"></div>
           <p>正在修复中，请稍候...</p>
+          <p class="loading-sub" v-if="store.currentTask.status === 'processing'">
+            GAN 模型正在生成字符纹理
+          </p>
         </div>
       </template>
       <template v-else-if="store.currentTask.status === 'failed'">
@@ -23,6 +40,9 @@
             <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
           </svg>
           <p>修复失败，请重试</p>
+          <button class="btn-retry-failed" @click="handleRetry" :disabled="store.isLoading">
+            重新修复
+          </button>
         </div>
       </template>
       <template v-else>
@@ -31,6 +51,7 @@
             <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
           </svg>
           <p>框选破损区域后点击「开始修复」</p>
+          <p class="tip">支持手动框选多个区域，或使用 AI 自动检测</p>
         </div>
       </template>
     </div>
@@ -40,7 +61,7 @@
       </svg>
       <p>请先上传古彝文手稿图像</p>
     </div>
-    <div class="preview-actions" v-if="store.currentTask && store.selectedRegions.length > 0 && store.currentTask.status === 'pending'">
+    <div class="preview-actions" v-if="showStartButton">
       <button class="btn-repair" @click="store.startRepair()" :disabled="store.isLoading">
         {{ store.isLoading ? '提交中...' : '开始修复' }}
       </button>
@@ -49,11 +70,46 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useRepairStore } from '@/stores/repair'
 import CompareSlider from './CompareSlider.vue'
+import QualityScore from './QualityScore.vue'
+import VersionPanel from './VersionPanel.vue'
+import type { RepairVersion } from '@/api'
 
 const store = useRepairStore()
+
+const previewVersionId = ref<string | null>(null)
+
+const isRepairProcessing = computed(() =>
+  ['queued', 'processing'].includes(store.currentTask?.status || '')
+)
+
+const showStartButton = computed(() =>
+  store.currentTask &&
+  store.selectedRegions.length > 0 &&
+  store.currentTask.status === 'pending'
+)
+
+const hasVersions = computed(() =>
+  store.versions && store.versions.length > 0
+)
+
+const displayScore = computed(() => {
+  if (previewVersionId.value) {
+    const v = store.versions.find(v => v.id === previewVersionId.value)
+    return v?.quality_score ?? store.currentTask?.quality_score ?? null
+  }
+  return store.currentTask?.quality_score ?? null
+})
+
+const previewRepairedPath = computed(() => {
+  if (previewVersionId.value) {
+    const v = store.versions.find(v => v.id === previewVersionId.value)
+    return v?.repaired_path ?? store.currentTask?.repaired_path ?? ''
+  }
+  return store.currentTask?.repaired_path ?? ''
+})
 
 const statusText = computed(() => {
   if (!store.currentTask) return ''
@@ -71,6 +127,20 @@ const statusClass = computed(() => {
   if (!store.currentTask) return ''
   return `status-${store.currentTask.status}`
 })
+
+function handleRetry() {
+  previewVersionId.value = null
+  store.retryRepair()
+}
+
+function handleSelectVersion(version: RepairVersion) {
+  previewVersionId.value = null
+  store.selectVersion(version.id)
+}
+
+function handlePreviewVersion(version: RepairVersion) {
+  previewVersionId.value = version.id
+}
 </script>
 
 <style scoped>
@@ -110,9 +180,19 @@ const statusClass = computed(() => {
 .preview-content {
   flex: 1;
   min-height: 300px;
+  overflow-y: auto;
+}
+.completed-view {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.score-section {
+  width: 100%;
+}
+.version-section {
+  width: 100%;
 }
 .preview-empty {
   flex: 1;
@@ -134,6 +214,7 @@ const statusClass = computed(() => {
   flex-direction: column;
   align-items: center;
   gap: 12px;
+  padding: 40px 20px;
   color: #a0aec0;
 }
 .loading-state p,
@@ -141,6 +222,14 @@ const statusClass = computed(() => {
 .empty-state p {
   font-size: 14px;
   margin: 0;
+}
+.loading-sub {
+  font-size: 12px !important;
+  color: #718096 !important;
+}
+.tip {
+  font-size: 12px !important;
+  color: #718096 !important;
 }
 .spinner {
   width: 40px;
@@ -152,6 +241,25 @@ const statusClass = computed(() => {
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+.btn-retry-failed {
+  margin-top: 8px;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #4299e1;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-retry-failed:hover:not(:disabled) {
+  background: #3182ce;
+}
+.btn-retry-failed:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .preview-actions {
   padding: 12px 16px;
@@ -176,5 +284,15 @@ const statusClass = computed(() => {
 .btn-repair:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.preview-content::-webkit-scrollbar {
+  width: 8px;
+}
+.preview-content::-webkit-scrollbar-track {
+  background: #1a202c;
+}
+.preview-content::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 4px;
 }
 </style>

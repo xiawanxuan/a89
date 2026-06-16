@@ -8,15 +8,33 @@ from sqlalchemy.orm import sessionmaker
 import torch
 
 from app.config import settings
-from app.models import RepairTask, DamageRegion, BatchTask, BatchItem
+from app.models import RepairTask, DamageRegion, BatchTask, BatchItem, RepairVersion
 from app.utils.image_utils import load_image, save_repair_image, save_full_repair_image
-from app.gan_model.inference import repair_region, detect_damage_regions, get_device
+from app.gan_model.inference import repair_region, detect_damage_regions, get_device, evaluate_quality
 
 
 def _get_sync_session():
     engine = create_engine(settings.DATABASE_URL_SYNC)
     Session = sessionmaker(bind=engine)
     return Session()
+
+
+MAX_VERSIONS = 5
+
+
+def _prune_old_versions(session, task_id: uuid.UUID):
+    versions = session.query(RepairVersion).filter(
+        RepairVersion.task_id == task_id
+    ).order_by(RepairVersion.version_number.desc()).all()
+    if len(versions) >= MAX_VERSIONS:
+        to_delete = versions[MAX_VERSIONS - 1:]
+        for v in to_delete:
+            if os.path.exists(v.repaired_path):
+                try:
+                    os.remove(v.repaired_path)
+                except Exception:
+                    pass
+            session.delete(v)
 
 
 @shared_task(bind=True, time_limit=settings.SINGLE_REPAIR_TIMEOUT * 2, soft_time_limit=settings.SINGLE_REPAIR_TIMEOUT)
@@ -33,9 +51,11 @@ def repair_single_task(self, task_id: str, regions: list[dict]):
         image = load_image(task.original_path)
         current_image = image.copy()
 
+        quality_score = 0.0
         for idx, region_data in enumerate(regions):
             x, y, w, h = region_data["x"], region_data["y"], region_data["width"], region_data["height"]
-            current_image = repair_region(current_image, x, y, w, h)
+            current_image, score = repair_region(current_image, x, y, w, h)
+            quality_score = score
 
             region_record = DamageRegion(
                 task_id=task.id,
@@ -44,8 +64,29 @@ def repair_single_task(self, task_id: str, regions: list[dict]):
             )
             session.add(region_record)
 
-        full_repair_path = save_full_repair_image(current_image, str(task.id))
+        existing_versions = session.query(RepairVersion).filter(
+            RepairVersion.task_id == task.id
+        ).count()
+        version_number = existing_versions + 1
+
+        _prune_old_versions(session, task.id)
+
+        full_repair_path = save_full_repair_image(current_image, str(task.id), version_number)
+
+        version = RepairVersion(
+            task_id=task.id,
+            version_number=version_number,
+            repaired_path=full_repair_path,
+            quality_score=quality_score,
+            is_selected=1 if version_number == 1 else 0,
+        )
+        session.add(version)
+
+        if version_number == 1:
+            task.selected_version_id = version.id
+
         task.repaired_path = full_repair_path
+        task.quality_score = quality_score
         task.status = "completed"
         task.completed_at = datetime.utcnow()
         session.commit()
@@ -55,7 +96,13 @@ def repair_single_task(self, task_id: str, regions: list[dict]):
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-        return {"status": "completed", "task_id": task_id, "repaired_path": full_repair_path}
+        return {
+            "status": "completed",
+            "task_id": task_id,
+            "repaired_path": full_repair_path,
+            "quality_score": quality_score,
+            "version_number": version_number,
+        }
 
     except Exception as e:
         session.rollback()
@@ -90,19 +137,35 @@ def repair_batch_task(self, batch_id: str):
                         detected_regions = detect_damage_regions(image)
 
                         current_image = image.copy()
+                        quality_score = 0.0
                         for idx, region_data in enumerate(detected_regions):
-                            current_image = repair_region(
+                            current_image, score = repair_region(
                                 current_image,
                                 region_data["x"], region_data["y"],
                                 region_data["width"], region_data["height"],
                             )
+                            quality_score = score
                             region_record = DamageRegion(
                                 task_id=task.id, **region_data,
                                 repaired_path=save_repair_image(current_image, str(task.id), idx),
                             )
                             session.add(region_record)
 
-                        task.repaired_path = save_full_repair_image(current_image, str(task.id))
+                        full_repair_path = save_full_repair_image(current_image, str(task.id), 1)
+
+                        version = RepairVersion(
+                            task_id=task.id,
+                            version_number=1,
+                            repaired_path=full_repair_path,
+                            quality_score=quality_score,
+                            is_selected=1,
+                        )
+                        session.add(version)
+                        session.flush()
+
+                        task.repaired_path = full_repair_path
+                        task.quality_score = quality_score
+                        task.selected_version_id = version.id
                         task.status = "completed"
                         task.completed_at = datetime.utcnow()
 

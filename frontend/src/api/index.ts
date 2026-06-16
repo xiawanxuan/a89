@@ -17,10 +17,13 @@ export interface RepairTask {
   filename: string
   original_path: string
   repaired_path: string | null
+  quality_score: number | null
+  selected_version_id: string | null
   status: string
   created_at: string
   completed_at: string | null
   regions: DamageRegionOut[]
+  versions: RepairVersion[]
 }
 
 export interface DamageRegionOut {
@@ -30,6 +33,16 @@ export interface DamageRegionOut {
   width: number
   height: number
   repaired_path: string | null
+}
+
+export interface RepairVersion {
+  id: string
+  task_id: string
+  version_number: number
+  repaired_path: string
+  quality_score: number
+  created_at: string
+  is_selected: number
 }
 
 export interface BatchTask {
@@ -83,6 +96,21 @@ export async function detectDamage(taskId: string): Promise<DamageRegionOut[]> {
 
 export async function getRepairStatus(taskId: string): Promise<RepairTask> {
   const { data } = await api.get(`/repair/status/${taskId}`)
+  return data
+}
+
+export async function retryRepair(taskId: string): Promise<any> {
+  const { data } = await api.post(`/repair/retry/${taskId}`)
+  return data
+}
+
+export async function listVersions(taskId: string): Promise<RepairVersion[]> {
+  const { data } = await api.get(`/repair/versions/${taskId}`)
+  return data
+}
+
+export async function selectVersion(taskId: string, versionId: string): Promise<any> {
+  const { data } = await api.post('/repair/select-version', { task_id: taskId, version_id: versionId })
   return data
 }
 

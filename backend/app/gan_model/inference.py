@@ -6,12 +6,13 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms
 
-from app.gan_model.network import Autoencoder, Discriminator, DamageDetector
+from app.gan_model.network import Autoencoder, Discriminator, DamageDetector, QualityScorer
 from app.config import settings
 
 _device = None
 _autoencoder = None
 _detector = None
+_scorer = None
 
 
 def get_device() -> torch.device:
@@ -70,6 +71,28 @@ def load_detector() -> DamageDetector:
     return _detector
 
 
+def load_scorer() -> QualityScorer:
+    global _scorer
+    if _scorer is not None:
+        return _scorer
+
+    device = get_device()
+    _scorer = QualityScorer(in_channels=3, base_filters=32)
+
+    if os.path.exists(settings.MODEL_PATH):
+        state_dict = torch.load(settings.MODEL_PATH, map_location=device, weights_only=True)
+        if "scorer" in state_dict:
+            _scorer.load_state_dict(state_dict["scorer"])
+    else:
+        _scorer.apply(_init_weights)
+
+    _scorer = _scorer.to(device)
+    _scorer.eval()
+    for param in _scorer.parameters():
+        param.requires_grad = False
+    return _scorer
+
+
 def _init_weights(m):
     if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
         torch.nn.init.normal_(m.weight, 0.0, 0.02)
@@ -89,9 +112,10 @@ _transform = transforms.Compose([
 
 
 @torch.no_grad()
-def repair_region(image: Image.Image, x: int, y: int, w: int, h: int) -> Image.Image:
+def repair_region(image: Image.Image, x: int, y: int, w: int, h: int) -> tuple[Image.Image, float]:
     device = get_device()
     model = load_autoencoder()
+    scorer = load_scorer()
 
     img_w, img_h = image.size
     region = image.crop((x, y, x + w, y + h))
@@ -107,17 +131,38 @@ def repair_region(image: Image.Image, x: int, y: int, w: int, h: int) -> Image.I
     output_np = output_np * 0.5 + 0.5
     output_np = torch.clamp(output_np, 0, 1)
 
-    repaired = transforms.ToPILImage()(output_np)
-    repaired = repaired.resize((w, h), Image.LANCZOS)
+    repaired_patch = transforms.ToPILImage()(output_np)
+    repaired_patch = repaired_patch.resize((w, h), Image.LANCZOS)
 
     result = image.copy()
-    result.paste(repaired, (x, y))
+    result.paste(repaired_patch, (x, y))
 
-    del region_tensor, mask, input_tensor, output, output_np
+    quality_score_tensor = scorer(_transform(result).unsqueeze(0).to(device, non_blocking=True))
+    quality_score = float(quality_score_tensor.squeeze().cpu().item())
+    quality_score = round(max(0.0, min(100.0, quality_score)), 2)
+
+    del region_tensor, mask, input_tensor, output, output_np, quality_score_tensor
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    return result
+    return result, quality_score
+
+
+@torch.no_grad()
+def evaluate_quality(image: Image.Image) -> float:
+    device = get_device()
+    scorer = load_scorer()
+
+    input_tensor = _transform(image).unsqueeze(0).to(device, non_blocking=True)
+    score_tensor = scorer(input_tensor)
+    quality_score = float(score_tensor.squeeze().cpu().item())
+    quality_score = round(max(0.0, min(100.0, quality_score)), 2)
+
+    del input_tensor, score_tensor
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    return quality_score
 
 
 @torch.no_grad()

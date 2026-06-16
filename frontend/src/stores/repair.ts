@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { RepairTask, BatchTask, DamageRegion, DamageRegionOut } from '@/api'
+import type { RepairTask, BatchTask, DamageRegion, DamageRegionOut, RepairVersion } from '@/api'
 import * as api from '@/api'
 
 export const useRepairStore = defineStore('repair', () => {
@@ -10,6 +10,8 @@ export const useRepairStore = defineStore('repair', () => {
   const batchTask = ref<BatchTask | null>(null)
   const historyList = ref<RepairTask[]>([])
   const batchList = ref<BatchTask[]>([])
+  const versions = ref<RepairVersion[]>([])
+  const selectedVersion = ref<RepairVersion | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
@@ -30,13 +32,18 @@ export const useRepairStore = defineStore('repair', () => {
         filename: result.filename,
         original_path: result.original_path,
         repaired_path: null,
+        quality_score: null,
+        selected_version_id: null,
         status: 'pending',
         created_at: new Date().toISOString(),
         completed_at: null,
         regions: [],
+        versions: [],
       }
       selectedRegions.value = []
       detectedRegions.value = []
+      versions.value = []
+      selectedVersion.value = null
     } catch (e: any) {
       error.value = e.response?.data?.detail || '上传失败'
     } finally {
@@ -72,12 +79,51 @@ export const useRepairStore = defineStore('repair', () => {
     }
   }
 
+  async function retryRepair() {
+    if (!currentTask.value) return
+    isLoading.value = true
+    try {
+      await api.retryRepair(currentTask.value.id)
+      currentTask.value.status = 'queued'
+      pollRepairStatus()
+    } catch (e: any) {
+      error.value = e.response?.data?.detail || '重新修复失败'
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  async function selectVersion(versionId: string) {
+    if (!currentTask.value) return
+    try {
+      await api.selectVersion(currentTask.value.id, versionId)
+      const task = await api.getRepairStatus(currentTask.value.id)
+      currentTask.value = task
+      versions.value = task.versions || []
+      selectedVersion.value = versions.value.find(v => v.id === versionId) || null
+    } catch (e: any) {
+      error.value = e.response?.data?.detail || '选择版本失败'
+    }
+  }
+
+  async function loadVersions() {
+    if (!currentTask.value) return
+    try {
+      versions.value = await api.listVersions(currentTask.value.id)
+      selectedVersion.value = versions.value.find(v => v.is_selected === 1) || null
+    } catch (e: any) {
+      error.value = e.response?.data?.detail || '加载版本失败'
+    }
+  }
+
   function pollRepairStatus() {
     if (!currentTask.value) return
     const interval = setInterval(async () => {
       try {
         const task = await api.getRepairStatus(currentTask.value!.id)
         currentTask.value = task
+        versions.value = task.versions || []
+        selectedVersion.value = versions.value.find(v => v.is_selected === 1) || null
         if (task.status === 'completed' || task.status === 'failed') {
           clearInterval(interval)
         }
@@ -160,6 +206,8 @@ export const useRepairStore = defineStore('repair', () => {
     currentTask.value = null
     selectedRegions.value = []
     detectedRegions.value = []
+    versions.value = []
+    selectedVersion.value = null
     error.value = null
   }
 
@@ -170,6 +218,8 @@ export const useRepairStore = defineStore('repair', () => {
     batchTask,
     historyList,
     batchList,
+    versions,
+    selectedVersion,
     isLoading,
     error,
     isTaskCompleted,
@@ -177,6 +227,9 @@ export const useRepairStore = defineStore('repair', () => {
     uploadImage,
     detectDamageRegions,
     startRepair,
+    retryRepair,
+    selectVersion,
+    loadVersions,
     uploadBatch,
     loadHistory,
     loadBatchList,

@@ -24,8 +24,11 @@ def save_repair_image(image: Image.Image, task_id: str, region_index: int = 0) -
     return saved_path
 
 
-def save_full_repair_image(image: Image.Image, task_id: str) -> str:
-    saved_name = f"{task_id}_repaired.png"
+def save_full_repair_image(image: Image.Image, task_id: str, version: int = 0) -> str:
+    if version > 0:
+        saved_name = f"{task_id}_repaired_v{version}.png"
+    else:
+        saved_name = f"{task_id}_repaired.png"
     saved_path = os.path.join(settings.REPAIR_DIR, saved_name)
     image.save(saved_path, quality=95)
     return saved_path
